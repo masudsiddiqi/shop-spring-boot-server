@@ -1,0 +1,1459 @@
+openapi: 3.0.3
+info:
+  title: Shop API Spec
+  description: |-
+    A small e-commerce API with four resources: users, products, cart and orders.
+    It is a test target for an API test framework. Every error uses RFC 9457 Problem Details (the ProblemDetails schema).
+    A 404 for a path that does not exist and a 405 for a wrong HTTP method are made by the routing of the server. They are not listed for each operation.
+
+    Accounts of the local backend (password for all: password123):
+    admin (role admin), seller1 (role seller), customer1 and customer2 (role customer).
+
+    Permissions of the roles:
+    admin has all. seller has product:read, product:create, product:update.
+    customer has product:read, cart:read, cart:update, order:read, order:create, order:cancel.
+
+    A customer can see and cancel only the own orders. An order goes placed -> shipped (admin) or placed -> cancelled (owner or admin).
+  version: 1.0.0
+  contact:
+    name: Shop API Test Automation
+    url: https://example.com/shop-api
+servers:
+- url: http://localhost:8081
+  description: Spring Boot shop-api (local backend)
+- url: http://127.0.0.1:4011
+  description: Stoplight Prism Local Mock Server
+tags:
+- name: Health
+  description: Service availability checks
+- name: Auth
+  description: Authentication and token issuance
+- name: Users
+  description: Accounts
+- name: Products
+  description: The catalogue
+- name: Cart
+  description: The cart of the logged-in account
+- name: Orders
+  description: Orders and their life cycle
+security:
+- bearerAuth: []
+- basicAuth: []
+paths:
+  /ping:
+    get:
+      tags:
+      - Health
+      summary: Health check endpoint
+      description: Returns 200 when the server is up. Used by BaseTest before every test class.
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Server is healthy and running
+  /auth/login:
+    post:
+      tags:
+      - Auth
+      summary: Authenticate user and issue bearer token
+      description: Exchanges a username/password pair for a bearer token.
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              username: admin
+              password: password123
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+              example:
+                token: c96fd822-5c95-46fc-9156-ea52923f242e
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /users:
+    post:
+      tags:
+      - Users
+      summary: Register a new account
+      description: Public. Creates an account with the role 'customer'. A seller or an admin cannot be created here.
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRegistration'
+            example:
+              username: newcustomer
+              password: S3curePass
+              email: newcustomer@shop.example
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              example:
+                id: 5
+                username: newcustomer
+                email: newcustomer@shop.example
+                role: customer
+                createdAt: '2026-10-01T09:00:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    get:
+      tags:
+      - Users
+      summary: List accounts (admin only)
+      description: Needs the permission user:read (role admin). Never returns a password.
+      operationId: listUsers
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      parameters:
+      - name: role
+        in: query
+        required: false
+        description: Only accounts with this role
+        schema:
+          $ref: '#/components/schemas/Role'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of accounts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPage'
+              example:
+                items:
+                - id: 3
+                  username: customer1
+                  email: customer1@shop.example
+                  role: customer
+                  createdAt: '2026-10-01T09:00:00Z'
+                page: 1
+                limit: 10
+                total: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /users/me:
+    get:
+      tags:
+      - Users
+      summary: Get the logged-in account
+      description: Any logged-in account can read its own data.
+      operationId: getCurrentUser
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: The logged-in account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              example:
+                id: 3
+                username: customer1
+                email: customer1@shop.example
+                role: customer
+                createdAt: '2026-10-01T09:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+  /products:
+    get:
+      tags:
+      - Products
+      summary: List products
+      description: Needs the permission product:read. Filters can be combined.
+      operationId: listProducts
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      parameters:
+      - name: category
+        in: query
+        required: false
+        description: Only products of this category
+        schema:
+          $ref: '#/components/schemas/Category'
+      - name: minPrice
+        in: query
+        required: false
+        description: Only products with a price of at least this value (0 or more)
+        schema:
+          type: number
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of products
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+              example:
+                items:
+                - id: 1
+                  sku: BOOK-001
+                  name: Clean Code
+                  description: A handbook of agile software craftsmanship
+                  category: books
+                  price: 29.99
+                  stock: 50
+                  createdAt: '2026-10-01T09:00:00Z'
+                page: 1
+                limit: 10
+                total: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    post:
+      tags:
+      - Products
+      summary: Create a product
+      description: Needs the permission product:create (roles admin and seller). The sku must be unique.
+      operationId: createProduct
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductRequest'
+            example:
+              sku: BOOK-003
+              name: Refactoring
+              category: books
+              price: 39.5
+              stock: 20
+      responses:
+        '201':
+          description: Product created
+          headers:
+            Location:
+              description: The path of the new product
+              schema:
+                type: string
+                example: /products/6
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+              example:
+                id: 6
+                sku: BOOK-003
+                name: Refactoring
+                description: A handbook of agile software craftsmanship
+                category: books
+                price: 39.5
+                stock: 20
+                createdAt: '2026-10-01T09:00:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /products/{id}:
+    parameters:
+    - $ref: '#/components/parameters/ProductId'
+    get:
+      tags:
+      - Products
+      summary: Get a product
+      description: Needs the permission product:read.
+      operationId: getProductById
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: The product
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+              example:
+                id: 1
+                sku: BOOK-001
+                name: Clean Code
+                description: A handbook of agile software craftsmanship
+                category: books
+                price: 29.99
+                stock: 50
+                createdAt: '2026-10-01T09:00:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+    put:
+      tags:
+      - Products
+      summary: Replace a product
+      description: Needs the permission product:update (roles admin and seller). All fields are replaced.
+      operationId: updateProduct
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductRequest'
+      responses:
+        '200':
+          description: Product replaced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+              example:
+                id: 1
+                sku: BOOK-001
+                name: Clean Code
+                description: A handbook of agile software craftsmanship
+                category: books
+                price: 29.99
+                stock: 50
+                createdAt: '2026-10-01T09:00:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    patch:
+      tags:
+      - Products
+      summary: Change some fields of a product
+      description: Needs the permission product:update. Only the fields that are sent are changed.
+      operationId: partialUpdateProduct
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductPatchRequest'
+            example:
+              price: 24.99
+      responses:
+        '200':
+          description: Product changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+              example:
+                id: 1
+                sku: BOOK-001
+                name: Clean Code
+                description: A handbook of agile software craftsmanship
+                category: books
+                price: 29.99
+                stock: 50
+                createdAt: '2026-10-01T09:00:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    delete:
+      tags:
+      - Products
+      summary: Delete a product
+      description: Needs the permission product:delete (role admin). A product that is in an order that is still
+        placed or shipped cannot be deleted (409).
+      operationId: deleteProduct
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: Product deleted. There is no body.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /cart:
+    get:
+      tags:
+      - Cart
+      summary: Get my cart
+      description: Needs the permission cart:read. Every account has its own cart.
+      operationId: getCart
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: The cart of the logged-in account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+              example:
+                items:
+                - productId: 1
+                  name: Clean Code
+                  unitPrice: 29.99
+                  quantity: 2
+                  lineTotal: 59.98
+                total: 59.98
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+    delete:
+      tags:
+      - Cart
+      summary: Empty my cart
+      description: Needs the permission cart:update.
+      operationId: clearCart
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: Cart emptied. There is no body.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+  /cart/items/{productId}:
+    parameters:
+    - $ref: '#/components/parameters/CartProductId'
+    put:
+      tags:
+      - Cart
+      summary: Set the quantity of a product in my cart
+      description: Needs the permission cart:update. Adds the product, or replaces its quantity. The quantity cannot
+        be more than the stock (409).
+      operationId: setCartItem
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CartItemRequest'
+            example:
+              quantity: 2
+      responses:
+        '200':
+          description: The cart after the change
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+              example:
+                items:
+                - productId: 1
+                  name: Clean Code
+                  unitPrice: 29.99
+                  quantity: 2
+                  lineTotal: 59.98
+                total: 59.98
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    delete:
+      tags:
+      - Cart
+      summary: Remove a product from my cart
+      description: Needs the permission cart:update.
+      operationId: removeCartItem
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: The cart after the change
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+              example:
+                items: []
+                total: 0
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+  /orders:
+    post:
+      tags:
+      - Orders
+      summary: Place an order from my cart
+      description: |-
+        Needs the permission order:create. The order is made from the items of the cart. The stock of every product goes down and the cart is emptied.
+        The header Idempotency-Key is required. Sending the same key with the same body again does not create a second order: the answer is 200 with the same order. The same key with a different body is a conflict (409). An empty cart, or a product with not enough stock, is a conflict (409).
+      operationId: createOrder
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequest'
+            example:
+              shippingAddress:
+                street: 12 Market Street
+                city: Dhaka
+                postalCode: '1212'
+                country: BD
+              note: Leave at the door
+      responses:
+        '200':
+          description: The same key and the same body were sent before. The existing order is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                id: 1
+                status: placed
+                customer: customer1
+                items:
+                - productId: 1
+                  name: Clean Code
+                  unitPrice: 29.99
+                  quantity: 2
+                  lineTotal: 59.98
+                total: 59.98
+                shippingAddress:
+                  street: 12 Market Street
+                  city: Dhaka
+                  postalCode: '1212'
+                  country: BD
+                note: Leave at the door
+                createdAt: '2026-10-24T10:15:00Z'
+        '201':
+          description: Order placed
+          headers:
+            Location:
+              description: The path of the new order
+              schema:
+                type: string
+                example: /orders/1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                id: 1
+                status: placed
+                customer: customer1
+                items:
+                - productId: 1
+                  name: Clean Code
+                  unitPrice: 29.99
+                  quantity: 2
+                  lineTotal: 59.98
+                total: 59.98
+                shippingAddress:
+                  street: 12 Market Street
+                  city: Dhaka
+                  postalCode: '1212'
+                  country: BD
+                note: Leave at the door
+                createdAt: '2026-10-24T10:15:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    get:
+      tags:
+      - Orders
+      summary: List orders
+      description: Needs the permission order:read. A customer sees only the own orders. An admin sees all orders.
+      operationId: listOrders
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        description: Only orders with this status
+        schema:
+          $ref: '#/components/schemas/OrderStatus'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of orders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderPage'
+              example:
+                items:
+                - id: 1
+                  status: placed
+                  customer: customer1
+                  items:
+                  - productId: 1
+                    name: Clean Code
+                    unitPrice: 29.99
+                    quantity: 2
+                    lineTotal: 59.98
+                  total: 59.98
+                  shippingAddress:
+                    street: 12 Market Street
+                    city: Dhaka
+                    postalCode: '1212'
+                    country: BD
+                  note: Leave at the door
+                  createdAt: '2026-10-24T10:15:00Z'
+                page: 1
+                limit: 10
+                total: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /orders/{id}:
+    parameters:
+    - $ref: '#/components/parameters/OrderId'
+    get:
+      tags:
+      - Orders
+      summary: Get an order
+      description: 'Needs the permission order:read. A customer can read only the own orders: the order of another
+        customer is a 403.'
+      operationId: getOrderById
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: The order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                id: 1
+                status: placed
+                customer: customer1
+                items:
+                - productId: 1
+                  name: Clean Code
+                  unitPrice: 29.99
+                  quantity: 2
+                  lineTotal: 59.98
+                total: 59.98
+                shippingAddress:
+                  street: 12 Market Street
+                  city: Dhaka
+                  postalCode: '1212'
+                  country: BD
+                note: Leave at the door
+                createdAt: '2026-10-24T10:15:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+  /orders/{id}/cancel:
+    parameters:
+    - $ref: '#/components/parameters/OrderId'
+    post:
+      tags:
+      - Orders
+      summary: Cancel an order
+      description: Needs the permission order:cancel. A customer can cancel only the own orders (another customer's
+        order is a 403). Only an order that is still placed can be cancelled (409). The stock of the products goes
+        up again.
+      operationId: cancelOrder
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: The cancelled order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                id: 1
+                status: cancelled
+                customer: customer1
+                items:
+                - productId: 1
+                  name: Clean Code
+                  unitPrice: 29.99
+                  quantity: 2
+                  lineTotal: 59.98
+                total: 59.98
+                shippingAddress:
+                  street: 12 Market Street
+                  city: Dhaka
+                  postalCode: '1212'
+                  country: BD
+                note: Leave at the door
+                createdAt: '2026-10-24T10:15:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /orders/{id}/ship:
+    parameters:
+    - $ref: '#/components/parameters/OrderId'
+    post:
+      tags:
+      - Orders
+      summary: Mark an order as shipped (admin only)
+      description: Needs the permission order:ship (role admin). Only an order that is still placed can be shipped
+        (409).
+      operationId: shipOrder
+      security:
+      - bearerAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: The shipped order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                id: 1
+                status: shipped
+                customer: customer1
+                items:
+                - productId: 1
+                  name: Clean Code
+                  unitPrice: 29.99
+                  quantity: 2
+                  lineTotal: 59.98
+                total: 59.98
+                shippingAddress:
+                  street: 12 Market Street
+                  city: Dhaka
+                  postalCode: '1212'
+                  country: BD
+                note: Leave at the door
+                createdAt: '2026-10-24T10:15:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '409':
+          $ref: '#/components/responses/Conflict'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    basicAuth:
+      type: http
+      scheme: basic
+  parameters:
+    ProductId:
+      name: id
+      in: path
+      required: true
+      description: Unique product id
+      schema:
+        type: integer
+        minimum: 1
+    OrderId:
+      name: id
+      in: path
+      required: true
+      description: Unique order id
+      schema:
+        type: integer
+        minimum: 1
+    CartProductId:
+      name: productId
+      in: path
+      required: true
+      description: Id of the product in the cart
+      schema:
+        type: integer
+        minimum: 1
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Page number, starting at 1
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Number of records in one page (1 to 50)
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 10
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: A value that is new for every order the client wants to place (8 to 64 characters). It makes
+        a repeated request safe.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 64
+  responses:
+    BadRequest:
+      description: 'Bad Request: the request cannot be read (broken JSON, wrong type, unknown field or unknown enum
+        value, wrong path or query parameter type, missing required header or query parameter)'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: https://example.com/probs/bad-request
+            title: Bad Request
+            status: 400
+            detail: Invalid JSON syntax, missing body, or field type mismatch
+            instance: /example
+    Unauthorized:
+      description: 'Unauthorized: the token is missing, invalid or expired'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: https://example.com/probs/unauthorized
+            title: Unauthorized
+            status: 401
+            detail: Authentication token is missing or expired
+            instance: /example
+    Forbidden:
+      description: 'Forbidden: the account has no permission for this operation, or the record belongs to another
+        account'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: https://example.com/probs/forbidden
+            title: Forbidden
+            status: 403
+            detail: You do not have required permission/role for this operation
+            instance: /example
+    NotFound:
+      description: 'Resource Not Found: the record does not exist'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: https://example.com/probs/not-found
+            title: Not Found
+            status: 404
+            detail: The specified record does not exist
+            instance: /example
+    NotAcceptable:
+      description: 'Not Acceptable: the Accept header asks for a format the API does not produce'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: https://example.com/probs/not-acceptable
+            title: Not Acceptable
+            status: 406
+            detail: Could not find acceptable representation matching requested Accept header
+            instance: /example
+    Conflict:
+      description: 'Conflict: the request is valid, but the state of the data does not allow it'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: https://example.com/probs/conflict
+            title: Conflict
+            status: 409
+            detail: The request conflicts with the current state of the resource
+            instance: /example
+    PayloadTooLarge:
+      description: 'Payload Too Large: the body is bigger than the size limit'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: https://example.com/probs/payload-too-large
+            title: Payload Too Large
+            status: 413
+            detail: Request payload exceeds maximum allowed size
+            instance: /example
+    UnsupportedMediaType:
+      description: 'Unsupported Media Type: the Content-Type is missing or is not application/json'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: https://example.com/probs/unsupported-media-type
+            title: Unsupported Media Type
+            status: 415
+            detail: Unsupported or missing Content-Type header. Expected 'application/json'
+            instance: /example
+    UnprocessableEntity:
+      description: 'Unprocessable Entity: the JSON can be read, but a value breaks a rule (required, length, range,
+        format)'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: https://example.com/probs/unprocessable-entity
+            title: Unprocessable Entity
+            status: 422
+            detail: 'Validation failed: price must be greater than or equal to 0.01'
+            instance: /example
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - username
+      - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    AuthTokenResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - token
+      properties:
+        token:
+          type: string
+    Role:
+      type: string
+      enum:
+      - admin
+      - seller
+      - customer
+      description: admin = all permissions. seller = manages products. customer = shops (cart and own orders).
+    User:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - username
+      - email
+      - role
+      - createdAt
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          $ref: '#/components/schemas/Role'
+        createdAt:
+          type: string
+          format: date-time
+    UserRegistration:
+      type: object
+      additionalProperties: false
+      required:
+      - username
+      - password
+      - email
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 30
+          pattern: ^[A-Za-z0-9_]+$
+          description: Letters, digits and underscore. Must be new (case does not matter).
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          format: password
+        email:
+          type: string
+          format: email
+    UserPage:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - page
+      - limit
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+    Category:
+      type: string
+      enum:
+      - books
+      - electronics
+      - clothing
+      - home
+    Product:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - sku
+      - name
+      - category
+      - price
+      - stock
+      - createdAt
+      properties:
+        id:
+          type: integer
+        sku:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          $ref: '#/components/schemas/Category'
+        price:
+          type: number
+          minimum: 0.01
+        stock:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+    ProductRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - sku
+      - name
+      - category
+      - price
+      - stock
+      properties:
+        sku:
+          type: string
+          pattern: ^[A-Z0-9-]{3,20}$
+          description: Unique. Capital letters, digits and '-', 3 to 20 characters.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        category:
+          $ref: '#/components/schemas/Category'
+        price:
+          type: number
+          minimum: 0.01
+          maximum: 9999999.99
+          description: At most 2 decimals.
+        stock:
+          type: integer
+          minimum: 0
+    ProductPatchRequest:
+      type: object
+      description: 'Partial schema: every property is optional. A value that is sent follows the same rules as in
+        ProductRequest.'
+      additionalProperties: false
+      properties:
+        sku:
+          type: string
+          pattern: ^[A-Z0-9-]{3,20}$
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        category:
+          $ref: '#/components/schemas/Category'
+        price:
+          type: number
+          minimum: 0.01
+          maximum: 9999999.99
+        stock:
+          type: integer
+          minimum: 0
+    ProductPage:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - page
+      - limit
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+    CartItemRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - quantity
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 99
+    LineItem:
+      type: object
+      additionalProperties: false
+      required:
+      - productId
+      - name
+      - unitPrice
+      - quantity
+      - lineTotal
+      properties:
+        productId:
+          type: integer
+        name:
+          type: string
+        unitPrice:
+          type: number
+          minimum: 0
+        quantity:
+          type: integer
+          minimum: 1
+        lineTotal:
+          type: number
+          minimum: 0
+    Cart:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineItem'
+        total:
+          type: number
+          minimum: 0
+    Address:
+      type: object
+      additionalProperties: false
+      required:
+      - street
+      - city
+      - postalCode
+      - country
+      properties:
+        street:
+          type: string
+          minLength: 1
+          maxLength: 100
+        city:
+          type: string
+          minLength: 1
+          maxLength: 60
+        postalCode:
+          type: string
+          pattern: ^[A-Za-z0-9 -]{3,10}$
+        country:
+          type: string
+          pattern: ^[A-Z]{2}$
+          description: ISO 3166-1 alpha-2 code, for example BD.
+    OrderRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - shippingAddress
+      properties:
+        shippingAddress:
+          $ref: '#/components/schemas/Address'
+        note:
+          type: string
+          maxLength: 200
+    OrderStatus:
+      type: string
+      enum:
+      - placed
+      - shipped
+      - cancelled
+      description: placed -> shipped (admin), placed -> cancelled (owner or admin). Shipped and cancelled orders
+        cannot change again.
+    Order:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - status
+      - customer
+      - items
+      - total
+      - shippingAddress
+      - createdAt
+      properties:
+        id:
+          type: integer
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        customer:
+          type: string
+          description: The username of the owner
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineItem'
+        total:
+          type: number
+          minimum: 0
+        shippingAddress:
+          $ref: '#/components/schemas/Address'
+        note:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    OrderPage:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - page
+      - limit
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+    ProblemDetails:
+      type: object
+      description: RFC 9457 Problem Details
+      additionalProperties: false
+      required:
+      - type
+      - title
+      - status
+      properties:
+        type:
+          type: string
+          format: uri
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
